@@ -9,21 +9,17 @@ library(rnaturalearthdata)
 library(hopkins)
 library("factoextra")
 
-leagues <- read.csv('Scrapping/leagues.csv')
+leagues <- read.csv('Scrapping/leagues_normalized.csv')
 
 head(leagues)
 summary(leagues)
 
-summary(factor(leagues$League_tier))
-
-leagues$League_tier <- factor(leagues$League_tier, levels = c("First Tier", "Second Tier"), 
-                          labels = c("1st", "2nd"))
 summary(leagues)
 
 
 # First chapter -> clustering only first leagues for each country
-leagues_first<-leagues[leagues$League_tier == '1st',]
-lf_data <- leagues_first[, c(5,9)]
+leagues_first<-leagues[leagues$League_tier == 1,]
+lf_data <- leagues_first[, c(5:8)]
 
 # z-score standardization below
 lf_data_z <- as.data.frame(lapply(lf_data, scale))
@@ -38,3 +34,10 @@ print(hopkins_stat)
 # Finding the optimal number of clusters using elbow method and silhouette method.
 fviz_nbclust(lf_data_z, kmeans, method = "wss")
 fviz_nbclust(lf_data_z, kmeans, method = "silhouette")
+
+# Second chapter -> clustering all leagues
+l_data <- leagues[, c(5:8)]
+l_data_z <- as.data.frame(lapply(l_data, scale))
+
+fviz_nbclust(l_data_z, kmeans, method = "wss")
+fviz_nbclust(l_data_z, kmeans, method = "silhouette")
