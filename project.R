@@ -7,8 +7,6 @@ setwd('C:/Users/flork/Documents/Studia/Stopień II/Semestr I/Unsupervised Learni
 library(sf)
 library(dplyr)
 library(ggplot2)
-library(rnaturalearth)
-library(rnaturalearthdata)
 library(cluster)
 library(clustertend)
 library(hopkins)
@@ -102,3 +100,33 @@ ac <- function(x) {
 }
 
 map_dbl(m, ac) # best ward
+
+plot_wws_hc <- fviz_nbclust(l_data_z, FUN = hcut, method = "wss")
+plot_silhouette_hc <- fviz_nbclust(l_data_z, FUN = hcut, method = "silhouette")
+grid.arrange(plot_wws_hc, plot_silhouette_hc, ncol=2)
+
+# agglomerative hierarchical clustering
+aggl <- agnes(l_data_z, method = "ward")
+round(aggl$ac, digits=2)
+pltree(aggl, cex = 0.6, hang = -1, main = "dendrogram - agnes")
+
+hc_agg2 <- cutree(aggl, k = 2)
+sil_agg2 <- silhouette(hc_agg2, dist(l_data_z))
+fviz_silhouette(sil_agg2)
+round(calinhara(l_data_z, hc_agg2), digits = 2)
+
+fviz_cluster(list(data = l_data_z, cluster = hc_agg2), frame = FALSE, geom = "point")
+leagues$agg_clusters <- hc_agg2
+
+# divisive hierarchical clustering
+div <- diana(l_data_z)
+round(div$dc, digits=2)
+pltree(div, cex = 0.6, hang = -1, main = "dendrogram - diana")
+
+hc_div2 <- cutree(div, k = 2)
+sil_div2 <- silhouette(hc_div2, dist(l_data_z))
+fviz_silhouette(sil_div2)
+round(calinhara(l_data_z, hc_div2), digits = 2)
+
+fviz_cluster(list(data = l_data_z, cluster = hc_div2), frame = FALSE, geom = "point")
+leagues$div_clusters <- hc_div2
