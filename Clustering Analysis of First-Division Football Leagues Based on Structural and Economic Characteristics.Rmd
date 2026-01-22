@@ -1,0 +1,319 @@
+---
+title: "Clustering Analysis of Football Leagues Based on Structural and Economic Characteristics"
+author: "Florian Ficek"
+date: "2026-01-21"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+<div style="text-align: justify">
+Football leagues vary widely in their economic resources, organizational structures, and competitive environments. While some leagues are characterized by high market values and strong internationalization, others operate with more limited financial capacity and a predominantly domestic focus. These differences make direct comparisons challenging when relying solely on rankings or isolated performance indicators.
+
+This paper applies clustering analysis to identify groups of football leagues based on structural and economic characteristics. Using standardized indicators such as league size, player composition, goal-scoring intensity, and market value, the study employs unsupervised learning methods to uncover patterns of similarity among leagues without imposing predefined classifications. Multiple clustering techniques are used to assess the robustness of the results and to capture league heterogeneity at different levels of aggregation.
+
+By providing an empirical classification of football leagues, this analysis contributes to a clearer understanding of structural differences across leagues and offers a data-driven framework for comparative research in professional football.
+</div>
+
+# 1. Dataset
+The dataset used in this study comprises information on 187 football leagues worldwide. League-level data were collected from the Transfermarkt website, a widely used source for football-related economic and structural information. In several countries, the dataset includes more than one league level, reflecting the structure of Transfermarkt’s league classifications. Additionally, in some countries the competitive season is divided into Apertura and Clausura tournaments; for the purposes of this analysis, these were combined into a single full-season observation.
+
+Data were collected in December 2025, at a point when leagues operating on a calendar-year schedule (spring–autumn) had completed their seasons, while leagues following a winter–spring schedule were approximately midway through their respective competitions. This timing ensures broad coverage across leagues while acknowledging differences in seasonal structures.
+
+The dataset includes four key features used for the clustering analysis:
+
+* **Goals_per_Match** - the average number of goals scored per match in a given league, capturing overall scoring intensity,
+* **Foreign_Player_Share** - the proportion of foreign players relative to the total number of players in the league, reflecting the degree of internationalization,
+* **Player_per_club** - the average number of registered players per club, representing squad size and organizational structure,
+* **Value_per_club** - the average market value of all players per club, serving as a proxy for the economic strength of the league.
+
+## 1.1. Environment Preparation
+```{r}
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(cluster)
+library(clustertend)
+library(hopkins)
+library(factoextra)
+library(fpc)
+library(gridExtra)
+library(dendextend)
+library(tidyverse)
+
+leagues <- read.csv('Scrapping/leagues_normalized.csv')
+head(leagues)
+```
+```{r}
+summary(leagues)
+```
+
+## 1.2. Standardization and Clusterability Assessment
+```{r}
+l_data <- leagues[, c(4:7)]
+l_data_z <- as.data.frame(lapply(l_data, scale))
+head(l_data_z)
+```
+```{r}
+l_data_matrix <- as.matrix(l_data_z)
+set.seed(3)
+hopkins_vals <- replicate(50, round(hopkins(l_data_matrix), digits=2))
+mean(hopkins_vals)
+```
+The Hopkins statistic equals 0.9888, indicating a strong tendency toward cluster formation and suggesting that the data are suitable for clustering analysis.
+
+# 2. K-means Algorithm
+The first algorithm applied in this study is K-means clustering, whose objective is to minimize the within-cluster sum of squared distances between observations and their corresponding cluster centroids.
+
+## 2.1. Finding the Optimal Number of Clusters
+As a first step in the clustering process, the optimal number of clusters is determined using the elbow method and the silhouette statistic.
+```{r}
+plot_wws_kmeans <- fviz_nbclust(l_data_z, kmeans, method = "wss")
+plot_silhouette_kmeans <- fviz_nbclust(l_data_z, kmeans, method = "silhouette")
+grid.arrange(plot_wws_kmeans, plot_silhouette_kmeans, ncol=2)
+```
+
+Both methods suggest that four clusters represent the optimal solution. However, the average silhouette width is relatively low, indicating that the difference between three and four clusters may be small. To ensure robustness, a three-cluster solution is also evaluated using the average silhouette width and the Calinski–Harabasz index to determine which number of clusters provides a better fit to the data.
+
+## 2.2. K-means on 4 Clusters
+```{r}
+set.seed(3)
+kmeans4 <- kmeans(l_data_z, 4, 25)
+sil_kmeans4 <- silhouette(kmeans4$cluster, dist(l_data_z))
+fviz_silhouette(sil_kmeans4)
+```
+```{r}
+round(calinhara(l_data_z, kmeans4$cluster), digits = 2)
+```
+The four-cluster solution achieves an average silhouette width of 0.29 and a Calinski–Harabasz index of 68, indicating a moderate clustering structure.
+
+## 2.3. K-means on 3 Clusters
+```{r}
+set.seed(3)
+kmeans3 <- kmeans(l_data_z, 3)
+sil_kmeans3 <- silhouette(kmeans3$cluster, dist(l_data_z))
+fviz_silhouette(sil_kmeans3)
+```
+```{r}
+round(calinhara(l_data_z, kmeans3$cluster), digits = 2)
+```
+The three-cluster solution achieves an average silhouette width of 0.26 and a Calinski–Harabasz index of 63.12, both of which are lower than the corresponding values for the four-cluster solution. Therefore, four clusters are selected as the final solution for the K-means algorithm.
+
+## 2.4. Visualization of Clusters
+```{r}
+kmeans_clusters <- fviz_cluster(kmeans4, data = l_data_z, frame = FALSE, geom = "point", main = "K-means (k=4)")
+kmeans_clusters
+```
+
+Cluster labels are assigned to the dataset, and information on the silhouette width and Calinski–Harabasz index is stored for subsequent analysis.
+```{r}
+leagues$kmeans_clusters <- kmeans4$cluster
+
+kmeans_desc <- c("K-means", round(mean(sil_kmeans4[,3]),2), round(calinhara(l_data_z, kmeans4$cluster), digits = 2))
+```
+
+# 3. PAM Algorithm
+The next algorithm applied is Partitioning Around Medoids (PAM), whose objective is to minimize the sum of dissimilarities between observations and their assigned medoids.
+
+## 3.1. Finding the Optimal Number of Clusters
+As in the previous analysis, the clustering process begins with determining the optimal number of clusters using the elbow method and the silhouette statistic.
+```{r}
+plot_wws_pam <- fviz_nbclust(l_data_z, pam, method = "wss")
+plot_silhouette_pam <- fviz_nbclust(l_data_z, pam, method = "silhouette")
+grid.arrange(plot_wws_pam, plot_silhouette_pam, ncol=2)
+```
+
+The elbow plot indicates a clear reduction in within-cluster variance up to five clusters, after which improvements become marginal. The silhouette analysis reaches its maximum at eight clusters; however, the increase relative to lower values of *k* is small, suggesting a plateau rather than a distinct optimum. To ensure robustness, both five- and eight-cluster solutions are evaluated using the average silhouette width and the Calinski–Harabasz index to determine which number of clusters provides a better fit to the data.
+
+## 3.2. PAM on 8 Clusters 
+```{r}
+set.seed(3)
+pam8 <- pam(l_data_z, 8)
+sil_pam8 <- silhouette(pam8$cluster, dist(l_data_z))
+fviz_silhouette(sil_pam8)
+```
+```{r}
+round(calinhara(l_data_z, pam8$cluster), digits = 2)
+```
+The eight-cluster solution achieves an average silhouette width of 0.26 and a Calinski–Harabasz index of 60.64.
+
+## 3.3. PAM on 5 Clusters
+```{r}
+set.seed(3)
+pam5 <- pam(l_data_z, 5)
+sil_pam5 <- silhouette(pam5$cluster, dist(l_data_z))
+fviz_silhouette(sil_pam5)
+```
+```{r}
+round(calinhara(l_data_z, pam5$cluster), digits = 2)
+```
+The five-cluster solution achieves an average silhouette width of 0.26 and a Calinski–Harabasz index of 68.74. The Calinski-Harabasz index is slightly higher than in the eight-cluster solution. Therefore, the five-cluster solution is selected as the final model.
+
+## 3.4. Visualization of Clusters
+```{r}
+pam_clusters <- fviz_cluster(pam5, data = l_data_z, frame = FALSE, geom = "point", main = "PAM (k=5)")
+pam_clusters
+```
+
+Cluster labels are assigned to the dataset, and information on the silhouette width and Calinski–Harabasz index is stored for subsequent analysis.
+```{r}
+leagues$pam_clusters <- pam5$cluster
+
+pam_desc <- c("PAM", round(mean(sil_pam5[,3]),2), round(calinhara(l_data_z, pam5$cluster), digits = 2))
+```
+
+# 4. Hierarchical Clustering
+The final algorithm applied in this study is hierarchical clustering, implemented using both agglomerative and divisive approaches. Given that the K-means and PAM analyses identified four and five clusters, respectively, both cluster numbers are subsequently examined within the hierarchical clustering framework for comparison.
+
+## 4.1. Agglomerative Approach
+As an initial step, the most appropriate linkage method is selected for agglomerative hierarchical clustering.
+
+### 4.1.1. Linkage Method
+```{r}
+m <- c( "average", "single", "complete", "ward")
+names(m) <- c( "average", "single", "complete", "ward")
+
+ac <- function(x) {
+  agnes(l_data_z, method = x)$ac
+}
+
+map_dbl(m, ac)
+```
+The Ward linkage method is identified as the most suitable approach, achieving the highest agglomerative coefficient, with a value close to 0.968.
+
+```{r}
+aggl <- agnes(l_data_z, method = "ward")
+round(aggl$ac, digits=2)
+```
+
+### 4.1.2. Dendrogram
+```{r}
+pltree(aggl, cex = 0.6, hang = -1, main = "Dendrogram - agglomerative approach")
+```
+
+### 4.1.3. Clustering Dendrogram into 5 Clusters
+```{r}
+set.seed(3)
+hc_agg5 <- cutree(aggl, k = 5)
+sil_agg5 <- silhouette(hc_agg5, dist(l_data_z))
+fviz_silhouette(sil_agg5)
+```
+```{r}
+round(calinhara(l_data_z, hc_agg5), digits = 2)
+```
+The hierarchical clustering solution achieves an average silhouette width of 0.27 and a Calinski–Harabasz index of 61.45, indicating a moderate clustering structure.
+
+### 4.1.4. Clustering Dendrogram into 4 Clusters
+```{r}
+set.seed(3)
+hc_agg4 <- cutree(aggl, k = 4)
+sil_agg4 <- silhouette(hc_agg4, dist(l_data_z))
+fviz_silhouette(sil_agg4)
+```
+```{r}
+round(calinhara(l_data_z, hc_agg4), digits = 2)
+```
+The hierarchical clustering solution with four clusters achieves lower values for both the average silhouette width and the Calinski–Harabasz index. Therefore, the five-cluster solution is selected for the final visualization.
+
+### 4.1.5. Visualization of Clusters
+```{r}
+hc_agg_clusters <- fviz_cluster(list(data = l_data_z, cluster = hc_agg5), frame = FALSE, geom = "point", main = "Hierarchical Agglomerative (k=5)")
+hc_agg_clusters
+```
+
+Cluster labels are assigned to the dataset, and information on the silhouette width and Calinski–Harabasz index is stored for subsequent analysis.
+```{r}
+leagues$agg_clusters <- hc_agg5
+
+hc_agg_desc <- c("Agglomerative hierarichical", round(mean(sil_agg5[,3]),2), round(calinhara(l_data_z, hc_agg5), digits = 2))
+```
+
+## 4.2. Divisive approach
+```{r}
+div <- diana(l_data_z)
+round(div$dc, digits=2)
+```
+The divisive coefficient equals 0.94, indicating that the divisive hierarchical clustering captures a meaningful underlying structure in the data.
+
+
+### 4.2.1. Dendrogram
+```{r}
+pltree(div, cex = 0.6, hang = -1, main = "dendrogram - divisive approach")
+```
+
+### 4.2.2. Clustering Dendrogram into 5 Clusters.
+```{r}
+set.seed(3)
+hc_div5 <- cutree(div, k = 5)
+sil_div5 <- silhouette(hc_div5, dist(l_data_z))
+fviz_silhouette(sil_div5)
+```
+```{r}
+round(calinhara(l_data_z, hc_div5), digits = 2)
+```
+
+The hierarchical clustering solution achieves an average silhouette width of 0.27 and a Calinski–Harabasz index of 40.38, indicating a moderate clustering structure.
+
+### 4.2.3. Clustering Dendrogram into 4 Clusters
+```{r}
+set.seed(3)
+hc_div4 <- cutree(div, k = 4)
+sil_div4 <- silhouette(hc_div4, dist(l_data_z))
+fviz_silhouette(sil_div4)
+```
+```{r}
+round(calinhara(l_data_z, hc_div4), digits = 2)
+```
+
+The hierarchical clustering solution with four clusters achieves lower values for both the average silhouette width and the Calinski–Harabasz index. Therefore, the five-cluster solution is selected for the final visualization.
+
+### 4.2.4. Visualization of Clusters
+```{r}
+hc_div_clusters <- fviz_cluster(list(data = l_data_z, cluster = hc_div5), frame = FALSE, geom = "point", main = "Hierarchical Divisive (k=5)")
+hc_div_clusters
+```
+
+Cluster labels are assigned to the dataset, and information on the silhouette width and Calinski–Harabasz index is stored for subsequent analysis.
+```{r}
+leagues$div_clusters <- hc_div5
+
+hc_div_desc <- c("Divisive hierarichical", round(mean(sil_div5[,3]),2), round(calinhara(l_data_z, hc_div5), digits = 2))
+```
+
+# 5. Comparison and Interpretation
+## 5.1. Comparison of Clustering Methods Using Quality Measures
+```{r}
+clustering_desc <- rbind(kmeans_desc, pam_desc, hc_agg_desc, hc_div_desc)
+rownames(clustering_desc) <- NULL
+clustering_desc
+```
+
+Among the four methods, K-means achieves the highest average silhouette width and one of the largest Calinski–Harabasz index values, indicating the best overall clustering quality. The remaining methods yield slightly lower validation scores, supporting the selection of K-means as the primary clustering approach.
+
+## 5.2. Compraison of the Plots and Clusters
+```{r}
+grid.arrange(kmeans_clusters, pam_clusters, hc_agg_clusters, hc_div_clusters, nrow = 2)
+```
+
+The cluster visualizations reveal broadly consistent structural patterns across methods, with a clear separation between high-value leagues and smaller, more domestic leagues along the first principal dimension. K-means and PAM produce more compact and well-separated clusters, while hierarchical methods capture coarser groupings with greater overlap between clusters. Overall, the visual evidence aligns with the internal validation results, supporting the selection of K-means as the primary clustering approach.
+
+Cluster 4 in the K-means method, Cluster 5 in the PAM method, and Cluster 5 in the agglomerative hierarchical method correspond to the same group of leagues, comprising the five strongest European leagues: the Premier League (England), La Liga (Spain), Serie A (Italy), the Bundesliga (Germany), and Ligue 1 (France). In contrast, under the divisive hierarchical clustering approach, Cluster 4 contains only the Premier League, highlighting its substantial structural and economic differences relative to the other leagues.
+
+Cluster 1 in the K-means method and Cluster 3 in the PAM method correspond to a similar group of the weakest leagues in the dataset. In the agglomerative and divisive hierarchical clustering methods, Cluster 3 consists of only four leagues, which represent the weakest group overall: Segona Divisió (second tier of Andorra), the Bhutan Premier League (top tier of Bhutan), PFL (top tier of Philippines), and Liga Puerto Rico (top tier of Puerto Rico).
+
+In the K-means solution, Cluster 4 consists predominantly of leagues from Africa, South America, Asia, and Oceania, while Cluster 2 is mainly composed of leagues from Europe, the Near East, and North America.
+
+In the PAM solution, Cluster 4 includes the relatively stronger leagues from Africa, South America, Asia, and Oceania. Consequently, Cluster 1 is dominated by top-tier leagues from Europe (including the English Championship as a second-tier league), the Near East, and North America. Cluster 2 primarily comprises second-tier leagues from various regions worldwide.
+
+In the agglomerative hierarchical clustering solution, Clusters 4 and 1 contain fewer leagues than in the PAM solution, as weaker leagues are reassigned to Cluster 2. Additionally, several leagues previously belonging to Cluster 3 are also moved to Cluster 2. As a result, Cluster 3, which represents the weakest leagues, consists of substantially fewer observations.
+
+In the divisive hierarchical clustering solution, Clusters 1 and 2 together contain 176 leagues out of 187, accounting for more than 94% of all clustered leagues. Weaker leagues are distributed across these two clusters while largely preserving continental divisions. Cluster 3 is identical to Cluster 3 in the agglomerative solution. However, one league is separated into a new Cluster 5, which contains only a single observation: the Nepal Super League. In the agglomerative method, this league was not grouped with the weakest leagues. This separation may indicate by the league’s small size and limited number of registered players.
+
+# Summary
+Overall, the clustering analyses reveal consistent structural patterns across methods, with clear distinctions between top-tier, mid-level, and weaker football leagues. K-means and PAM provide more granular and compact cluster structures, while hierarchical methods capture broader divisions within the data. Despite methodological differences, the results consistently highlight substantial economic and structural disparities among leagues, supporting the robustness of the identified groupings.
